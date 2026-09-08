@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Budget</title>
+  <link rel="stylesheet" href="css/app.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%92%B0%3C/text%3E%3C/svg%3E" />
+</head>
+<body>
+  <div id="app" x-data="appState()" x-cloak>
+    <nav class="topbar">
+      <div class="brand">💰 Budget</div>
+      <div class="tabs">
+        <button :class="{ active: page === 'dashboard' }" @click="page = 'dashboard'">Dashboard</button>
+        <button :class="{ active: page === 'forecast' }" @click="page = 'forecast'">Forecast</button>
+        <button :class="{ active: page === 'transactions' }" @click="page = 'transactions'">Transactions</button>
+        <button :class="{ active: page === 'import' }" @click="page = 'import'">Import</button>
+        <button :class="{ active: page === 'categories' }" @click="page = 'categories'">Categories</button>
+        <button :class="{ active: page === 'backup' }" @click="page = 'backup'">Backup</button>
+      </div>
+    </nav>
+
+    <main>
+      <!-- DASHBOARD -->
+      <section x-show="page === 'dashboard'" x-data="dashboardPage()">
+        <header class="page-header">
+          <h1>Dashboard</h1>
+          <div class="dashboard-controls">
+            <div class="view-toggle" role="tablist" aria-label="Time range">
+              <button :class="{ active: view === 'month' }" @click="view = 'month'">Month</button>
+              <button :class="{ active: view === 'ytd' }"   @click="view = 'ytd'">Year to date</button>
+              <button :class="{ active: view === 'year' }"  @click="view = 'year'">Full year</button>
+            </div>
+            <div class="month-picker">
+              <button @click="shiftPeriod(-1)" :title="view === 'year' ? 'Previous year' : 'Previous month'">‹</button>
+              <span x-text="rangeLabel"></span>
+              <button @click="shiftPeriod(1)"  :title="view === 'year' ? 'Next year' : 'Next month'">›</button>
+            </div>
+          </div>
+        </header>
+
+        <div class="summary-cards">
+          <div class="card">
+            <div class="card-label" x-text="budgetLabel"></div>
+            <div class="card-value" x-text="fmt(totals.budget)"></div>
+          </div>
+          <div class="card">
+            <div class="card-label" x-text="activityLabel"></div>
+            <div class="card-value" :class="{ over: totals.value > totals.budget }" x-text="fmt(totals.value)"></div>
+          </div>
+          <div class="card">
+            <div class="card-label" x-text="remainingLabel"></div>
+            <div class="card-value" :class="{ over: totals.remaining < 0 }" x-text="fmt(totals.remaining)"></div>
+          </div>
+          <div class="card">
+            <div class="card-label">Uncategorized</div>
+            <div class="card-value" :class="{ warn: totals.uncategorizedCount > 0 }">
+              <span x-text="totals.uncategorizedCount"></span>
+              <small x-text="' (' + fmt(totals.uncategorized) + ')'"></small>
+            </div>
+          </div>
+        </div>
+
+        <div class="chart-wrap">
+          <canvas id="budgetChart"></canvas>
+        </div>
+
+        <table class="data-table" x-show="rows.length">
+          <thead>
+            <tr>
+              <th>Category</th>
+              <th class="num" x-text="budgetLabel"></th>
+              <th class="num" x-text="activityLabel"></th>
+              <th class="num" x-text="remainingLabel"></th>
+              <th>Progress</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="row in rows" :key="row.id">
+              <tr>
+                <td><span class="swatch" :style="`background:${row.color}`"></span><span x-text="row.name"></span></td>
+                <td class="num" x-text="fmt(row.budget)"></td>
+                <td class="num" :class="{ over: row.value > row.budget }" x-text="fmt(row.value)"></td>
+                <td class="num" :class="{ over: row.remaining < 0 }" x-text="fmt(row.remaining)"></td>
+                <td>
+                  <div class="progress">
+                    <!-- Category identity is conveyed by the swatch dot in the
+                         first column, so the bar itself uses a neutral colour.
+                         Red is reserved exclusively for "spent > budget" via the
+                         .over class — it's an alarm, not a category identifier. -->
+                    <div class="progress-bar" :class="{ over: row.value > row.budget }"
+                         :style="`width:${Math.min(100, (row.value / Math.max(row.budget, 1)) * 100)}%`"></div>
+                  </div>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+        <p class="empty" x-show="!rows.length">No data yet for this period. Define some categories and import a CSV to get started.</p>
+      </section>
+
+      <!-- FORECAST -->
+      <section x-show="page === 'forecast'" x-data="forecastPage()">
+        <header class="page-header">
+          <h1>Forecast</h1>
+          <div class="month-picker">
+            <button @click="prevYear()" title="Previous year">‹</button>
+            <span x-text="year"></span>
+            <button @click="nextYear()" title="Next year">›</button>
+          </div>
+        </header>
+
+        <div class="forecast-controls">
+          <label>
+            <span>Starting balance at <span x-text="year"></span>-01-01</span>
+            <input type="number" step="1" x-model.number="startingBalance" @change="saveStartingBalance()" />
+          </label>
+          <div class="forecast-totals">
+            <div><span class="card-label">End-of-year balance</span>
+              <strong :class="{ negative: endBalance < 0 }" x-text="fmt(endBalance)"></strong></div>
+            <div><span class="card-label">Lowest month-end</span>
+              <strong :class="{ negative: lowestBalance.value < 0 }">
+                <span x-text="fmt(lowestBalance.value)"></span>
+                <small x-text="' (' + lowestBalance.label + ')'"></small>
+              </strong></div>
+          </div>
+        </div>
+
+        <div class="chart-wrap forecast-chart"><canvas id="forecastChart"></canvas></div>
+
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Month</th>
+              <th class="num">Income</th>
+              <th class="num">Expenses</th>
+              <th class="num">Net</th>
+              <th class="num">End balance</th>
+              <th>Source</th>
+            </tr>
+          </thead>
+          <!-- One <tbody> per month so the expandable breakdown can sit inside
+               the same iteration (Alpine's x-for template only takes one root). -->
+          <template x-for="m in months" :key="m.month">
+            <tbody>
+              <tr class="forecast-row"
+                  :class="{ 'forecast-past': m.isPast, 'forecast-current': m.isCurrent }"
+                  @click="toggleExpand(m.month)">
+                <td>
+                  <span class="expand-arrow" :class="{ open: expandedMonth === m.month }">▸</span>
+                  <span x-text="m.label"></span>
+                </td>
+                <td class="num" x-text="fmt(m.income)"></td>
+                <td class="num negative" x-text="'-' + fmt(m.expenses).replace('-','')"></td>
+                <td class="num" :class="{ negative: m.net < 0 }" x-text="fmt(m.net)"></td>
+                <td class="num" :class="{ over: m.balance < 0 }" x-text="fmt(m.balance)"></td>
+                <td>
+                  <span class="badge" :class="m.isPast ? 'ok' : 'warn'"
+                        x-text="m.isPast ? 'actual' : (m.isCurrent ? 'partial' : 'projected')"></span>
+                </td>
+              </tr>
+              <tr class="breakdown-row" x-show="expandedMonth === m.month">
+                <td colspan="6">
+                  <div class="breakdown">
+                    <div class="breakdown-section" x-show="breakdownIncome(m).length">
+                      <h4>Income</h4>
+                      <template x-for="b in breakdownIncome(m)" :key="'i-' + (b.id ?? 'uncat')">
+                        <div class="breakdown-item">
+                          <span class="swatch" :style="`background:${b.color}`"></span>
+                          <span class="breakdown-name" x-text="b.name"></span>
+                          <span class="breakdown-source badge" :class="b.isActual ? 'ok' : 'warn'"
+                                x-text="b.isActual ? 'actual' : 'projected'"></span>
+                          <span class="breakdown-amount num" x-text="fmt(b.amount)"></span>
+                        </div>
+                      </template>
+                    </div>
+                    <div class="breakdown-section" x-show="breakdownExpense(m).length">
+                      <h4>Expenses</h4>
+                      <template x-for="b in breakdownExpense(m)" :key="'e-' + (b.id ?? 'uncat')">
+                        <div class="breakdown-item">
+                          <span class="swatch" :style="`background:${b.color}`"></span>
+                          <span class="breakdown-name" x-text="b.name"></span>
+                          <span class="breakdown-source badge" :class="b.isActual ? 'ok' : 'warn'"
+                                x-text="b.isActual ? 'actual' : 'projected'"></span>
+                          <span class="breakdown-amount num" x-text="fmt(b.amount)"></span>
+                        </div>
+                      </template>
+                    </div>
+                    <p class="empty" x-show="!m.breakdown.length">
+                      No categorized activity or budget for this month.
+                    </p>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </template>
+        </table>
+
+        <p class="empty" x-show="!hasAnyCategories">
+          Add at least one Income or Expense category to see a forecast.
+        </p>
+      </section>
+
+      <!-- TRANSACTIONS -->
+      <section x-show="page === 'transactions'" x-data="transactionsPage()">
+        <header class="page-header">
+          <h1>Transactions</h1>
+          <div class="filters">
+            <input type="search" placeholder="Search description…" x-model="search" />
+            <select x-model="filterCategory">
+              <option value="">All categories</option>
+              <option value="__none__">— Uncategorized —</option>
+              <template x-for="c in categories" :key="c.id">
+                <option :value="c.id" x-text="c.name"></option>
+              </template>
+            </select>
+            <select x-model="filterMonth">
+              <option value="">All months</option>
+              <template x-for="m in availableMonths" :key="m">
+                <option :value="m" x-text="m"></option>
+              </template>
+            </select>
+          </div>
+        </header>
+
+        <div class="bulk-bar" x-show="selected.size > 0">
+          <span><span x-text="selected.size"></span> selected</span>
+          <select x-model="bulkCategoryId">
+            <option value="">Assign category…</option>
+            <template x-for="c in categories" :key="c.id">
+              <option :value="c.id" x-text="c.name"></option>
+            </template>
+          </select>
+          <label class="inline"><input type="checkbox" x-model="bulkLearn" /> Create rule from common keyword</label>
+          <button class="primary" @click="applyBulk()" :disabled="!bulkCategoryId">Apply</button>
+          <button @click="selected.clear(); selected = new Set(selected)">Clear</button>
+        </div>
+
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th><input type="checkbox" @change="toggleAll($event.target.checked)" :checked="allSelected" /></th>
+              <th class="sortable" :class="{ sorted: sortBy === 'date' }" @click="toggleSort('date')">
+                Date<span x-text="sortArrow('date')"></span>
+              </th>
+              <th class="sortable" :class="{ sorted: sortBy === 'description' }" @click="toggleSort('description')">
+                Description<span x-text="sortArrow('description')"></span>
+              </th>
+              <th class="num sortable" :class="{ sorted: sortBy === 'amount' }" @click="toggleSort('amount')">
+                Amount<span x-text="sortArrow('amount')"></span>
+              </th>
+              <th>Category</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="t in filtered" :key="t.id">
+              <tr :class="{ 'auto-cat': t.ruleId }">
+                <td><input type="checkbox" :checked="selected.has(t.id)" @change="toggleOne(t.id)" /></td>
+                <td x-text="t.date"></td>
+                <td>
+                  <span x-text="t.description"></span>
+                  <small x-show="t.ruleId" class="badge" title="Auto-categorized by a rule">auto</small>
+                </td>
+                <td class="num" :class="{ negative: t.amount < 0 }" x-text="fmt(t.amount)"></td>
+                <td>
+                  <!-- Same Alpine/select timing gotcha as the Rules table above -->
+                  <select :value="t.categoryId || ''" @change="assignCategory(t, $event.target.value)"
+                          x-effect="categories.length && $nextTick(() => $el.value = t.categoryId || '')">
+                    <option value="">—</option>
+                    <template x-for="c in categories" :key="c.id">
+                      <option :value="c.id" x-text="c.name"></option>
+                    </template>
+                  </select>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+          <!-- Totals over the currently VISIBLE (filtered) rows — reflects
+               whatever search/category/month filter is active above. -->
+          <tfoot x-show="filtered.length">
+            <tr class="totals-row">
+              <td></td>
+              <td colspan="2">
+                <strong x-text="filtered.length"></strong>
+                transaction<span x-show="filtered.length !== 1">s</span>
+                <span class="totals-breakdown">
+                  <span class="totals-in">In: <span x-text="fmt(filteredTotals.income)"></span></span>
+                  <span class="totals-out">Out: <span x-text="'-' + fmt(filteredTotals.expenses).replace('-','')"></span></span>
+                </span>
+              </td>
+              <td class="num totals-net" :class="{ negative: filteredTotals.net < 0 }">
+                <strong x-text="fmt(filteredTotals.net)"></strong>
+              </td>
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>
+        <p class="empty" x-show="!filtered.length">No transactions match your filter.</p>
+      </section>
+
+      <!-- IMPORT -->
+      <section x-show="page === 'import'" x-data="importPage()">
+        <header class="page-header"><h1>Import CSV</h1></header>
+
+        <div class="drop-zone" :class="{ over: dragOver }"
+             @dragover.prevent="dragOver = true"
+             @dragleave.prevent="dragOver = false"
+             @drop.prevent="handleDrop($event)">
+          <p>Drag a CSV file here, or</p>
+          <input type="file" accept=".csv,text/csv" @change="handleFile($event.target.files[0])" />
+          <p class="hint">Expected format: <code>DD-MM-YYYY;"Description";-123,45;DKK</code></p>
+        </div>
+
+        <div x-show="preview.length" class="preview">
+          <h2>Preview — <span x-text="preview.length"></span> rows
+            <small>(<span x-text="newCount"></span> new, <span x-text="dupeCount"></span> duplicates, <span x-text="autoCatCount"></span> auto-categorized)</small>
+          </h2>
+          <table class="data-table">
+            <thead>
+              <tr><th>Date</th><th>Description</th><th class="num">Amount</th><th>Status</th><th>Suggested category</th></tr>
+            </thead>
+            <tbody>
+              <template x-for="(p, i) in preview" :key="i">
+                <tr :class="{ dupe: p.duplicate }">
+                  <td x-text="p.date"></td>
+                  <td x-text="p.description"></td>
+                  <td class="num" :class="{ negative: p.amount < 0 }" x-text="fmt(p.amount)"></td>
+                  <td>
+                    <span x-show="p.duplicate" class="badge warn">duplicate</span>
+                    <span x-show="!p.duplicate && p.suggestedCategoryId" class="badge ok">auto</span>
+                    <span x-show="!p.duplicate && !p.suggestedCategoryId" class="badge">new</span>
+                  </td>
+                  <td>
+                    <!-- Same Alpine/select timing gotcha as elsewhere: options are
+                         rendered by the nested x-for after x-model already tried
+                         to sync, so we re-sync on the next tick. -->
+                    <select x-model="p.suggestedCategoryId" :disabled="p.duplicate"
+                            @change="assignImportCategory(p, $event.target.value)"
+                            x-effect="categories.length && $nextTick(() => $el.value = p.suggestedCategoryId || '')">
+                      <option value="">—</option>
+                      <template x-for="c in categories" :key="c.id">
+                        <option :value="c.id" x-text="c.name"></option>
+                      </template>
+                    </select>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <div class="actions">
+            <button class="primary" @click="commit()" :disabled="newCount === 0">
+              Import <span x-text="newCount"></span> new transaction<span x-show="newCount !== 1">s</span>
+            </button>
+            <button @click="preview = []">Cancel</button>
+          </div>
+        </div>
+
+        <div x-show="parseError" class="error" x-text="parseError"></div>
+      </section>
+
+      <!-- CATEGORIES -->
+      <section x-show="page === 'categories'" x-data="categoriesPage()">
+        <header class="page-header">
+          <h1>Categories</h1>
+          <div class="dashboard-controls">
+            <!-- Editing year: per-year monthly defaults live in the yearlyBudgets
+                 table; the "Default" column reflects/edits the value for THIS
+                 year. Empty years inherit the category's fallback. -->
+            <div class="month-picker">
+              <button @click="prevYear()" title="Previous year">‹</button>
+              <span>Editing budgets for <span x-text="year"></span></span>
+              <button @click="nextYear()" title="Next year">›</button>
+            </div>
+            <button class="primary" @click="add()">+ New category</button>
+          </div>
+        </header>
+
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Color</th>
+              <th>Name</th>
+              <th>Kind</th>
+              <th class="num">Default for <span x-text="year"></span> (DKK)</th>
+              <th class="num">Years set</th>
+              <th class="num">Month overrides</th>
+              <th class="num">Rules</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="c in categories" :key="c.id">
+              <tr>
+                <td><input type="color" x-model="c.color" @change="save(c)" /></td>
+                <td><input type="text" x-model="c.name" @change="save(c)" /></td>
+                <td>
+                  <select x-model="c.kind" @change="save(c)">
+                    <option value="expense">Expense</option>
+                    <option value="income">Income</option>
+                  </select>
+                </td>
+                <td class="num">
+                  <input type="number" step="1"
+                         :value="yearDefaultFor(c.id)"
+                         :class="{ 'value-inherited': isYearInherited(c.id) }"
+                         :title="isYearInherited(c.id) ? 'Inherited from category default — change to set an explicit value for ' + year : 'Explicit value for ' + year"
+                         @change="saveYearDefault(c, $event.target.value)" />
+                </td>
+                <td class="num" x-text="yearOverrideCount(c.id)"></td>
+                <td class="num">
+                  <button @click="openMonths(c)">
+                    <span x-text="overrideCount(c.id)"></span> · Months…
+                  </button>
+                </td>
+                <td class="num" x-text="ruleCount(c.id)"></td>
+                <td><button class="danger" @click="remove(c)">Delete</button></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+        <p class="empty" x-show="!categories.length">No categories yet. Add one to get started.</p>
+
+        <h2 style="margin-top:2rem">Rules</h2>
+        <p class="hint">Rules auto-assign categories to imported transactions based on description text. Created automatically when you categorize transactions.</p>
+        <table class="data-table" x-show="rules.length">
+          <thead><tr><th>If description contains…</th><th>Assign to category</th><th class="num">Matches</th><th>Created</th><th></th></tr></thead>
+          <tbody>
+            <template x-for="r in rules" :key="r.id">
+              <tr>
+                <td><input type="text" class="mono" x-model="r.pattern" @change="savePattern(r)" /></td>
+                <td>
+                  <!-- Alpine wires x-model on the <select> before the nested
+                       <template x-for> populates its options, so the initial
+                       value gets clobbered to the first available <option>.
+                       $nextTick defers the resync until after options exist. -->
+                  <select x-model.number="r.categoryId" @change="saveCategory(r)"
+                          x-effect="categories.length && $nextTick(() => $el.value = r.categoryId)">
+                    <template x-for="c in categories" :key="c.id">
+                      <option :value="c.id" x-text="c.name"></option>
+                    </template>
+                  </select>
+                </td>
+                <td class="num" x-text="matchCount(r.pattern)"></td>
+                <td x-text="new Date(r.createdAt).toLocaleDateString()"></td>
+                <td><button class="danger" @click="removeRule(r)">Delete</button></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+        <p class="empty" x-show="!rules.length">No rules yet.</p>
+      </section>
+
+      <!-- BACKUP -->
+      <section x-show="page === 'backup'" x-data="backupPage()">
+        <header class="page-header"><h1>Backup</h1></header>
+
+        <!-- Optional Google Drive sync — self-contained Alpine component in
+             sync.js. When signed out, the app runs exactly as before. -->
+        <div class="card-block" x-data="syncPanel()" x-init="init()">
+          <h2>Google Drive sync <small class="badge" :class="signedIn ? 'ok' : 'warn'"
+                                     x-text="signedIn ? 'active' : 'off'"></small></h2>
+
+          <template x-if="!signedIn">
+            <div>
+              <p>Optional. When signed in, the app keeps a private
+                <code>budget.json</code> in your Google Drive's appdata folder
+                (invisible to you in the Drive UI, private to this app) so you can
+                pick up where you left off on another device.</p>
+
+              <div x-show="hasDefaultClientId" style="margin-top: 0.75rem;">
+                <button class="primary" @click="signIn()" :disabled="!ready">
+                  Sign in with Google
+                </button>
+                <small class="hint" x-show="!ready">Loading Google sign-in library…</small>
+                <p class="hint" style="margin-top: 0.6rem;">
+                  If Google shows a "not verified" warning, click <em>Advanced → Go to app</em> to continue.
+                </p>
+              </div>
+
+              <!-- Only reached when the deployment has no DEFAULT_CLIENT_ID baked
+                   into sync.js. Not something end users should see in production. -->
+              <p x-show="!hasDefaultClientId" class="rule-error" style="margin-top: 0.75rem;">
+                Google Drive sync isn't configured on this deployment.
+                The app owner needs to set <code>DEFAULT_CLIENT_ID</code> in
+                <code>js/sync.js</code>.
+              </p>
+            </div>
+          </template>
+
+          <template x-if="signedIn">
+            <div>
+              <p>Signed in as <strong x-text="userEmail || 'Google account'"></strong>.
+                 Every change is auto-synced to Drive.</p>
+              <p class="hint">
+                Last synced: <span x-text="formatTime(lastSyncedAt)"></span>
+                <span x-show="syncing"> · syncing now…</span>
+                <span x-show="pendingUpload && !syncing"> · upload queued</span>
+              </p>
+              <button class="primary" @click="syncNow()" :disabled="syncing">Sync now</button>
+              <button @click="signOut()">Sign out</button>
+            </div>
+          </template>
+
+          <p class="rule-error" style="margin-top: 0.75rem;" x-show="lastError">
+            <span x-text="lastError"></span>
+          </p>
+        </div>
+
+        <div class="card-block">
+          <h2>Export</h2>
+          <p>Download a JSON file containing all your categories, transactions, and rules. Keep this safe — it's your only backup if you clear browser data <em>and</em> haven't set up Google Drive sync above.</p>
+          <button class="primary" @click="exportData()">Download backup</button>
+          <p class="hint" x-show="lastExport">Last export this session: <span x-text="lastExport"></span></p>
+        </div>
+        <div class="card-block">
+          <h2>Import</h2>
+          <p>Restore from a previous backup. <strong>This replaces all current data.</strong></p>
+          <input type="file" accept=".json,application/json" @change="importData($event.target.files[0])" />
+          <p x-show="importMsg" :class="importErr ? 'error' : 'success'" x-text="importMsg"></p>
+        </div>
+        <div class="card-block">
+          <h2>Reset</h2>
+          <p>Delete everything and start over. Cannot be undone.</p>
+          <button class="danger" @click="reset()">Delete all data</button>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <small>Data is stored locally in your browser via IndexedDB. Nothing is sent anywhere. Export regularly!</small>
+    </footer>
+
+    <!-- Per-month budget editor modal (opened from Categories page) -->
+    <div class="modal-backdrop" x-show="budgetModal.open" @click.self="closeBudgetModal()" @keydown.escape.window="closeBudgetModal()">
+      <div class="modal modal-wide">
+        <h2>Monthly amounts — <span x-text="budgetModal.categoryName"></span>
+          <small class="badge" :class="budgetModal.categoryKind === 'income' ? 'ok' : 'warn'" x-text="budgetModal.categoryKind"></small>
+        </h2>
+        <p class="hint">
+          Default: <strong x-text="fmt(budgetModal.defaultAmount)"></strong>.
+          Set a different amount for any month (e.g. for an annual insurance payment, set 0 for the default and the full amount for the month it's billed).
+          Months matching the default fall back to it automatically.
+        </p>
+
+        <div class="year-nav">
+          <button @click="budgetPrevYear()">‹</button>
+          <span x-text="budgetModal.year"></span>
+          <button @click="budgetNextYear()">›</button>
+        </div>
+
+        <div class="months-grid">
+          <template x-for="m in budgetModal.months" :key="m.month">
+            <label class="month-cell">
+              <span class="month-cell-label">
+                <span x-text="m.label"></span>
+                <small x-show="m.isOverride" class="badge warn">override</small>
+              </span>
+              <input type="number" step="1" x-model.number="m.amount" @change="saveBudgetMonth(m)" />
+            </label>
+          </template>
+        </div>
+
+        <div class="modal-actions">
+          <button class="primary" @click="closeBudgetModal()">Done</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Rule creation modal (shared by Transactions page, single + bulk assign) -->
+    <div class="modal-backdrop" x-show="ruleModal.open" @click.self="closeRuleModal()" @keydown.escape.window="closeRuleModal()">
+      <div class="modal" @keydown.enter="confirmRule()">
+        <h2>Create a rule?</h2>
+        <p>
+          Future imports whose description contains the text below will be auto-assigned to
+          <strong x-text="ruleModal.categoryName"></strong>.
+        </p>
+
+        <!-- Clickable tokens from the transaction description. Default is the first
+             meaningful word (already pre-filled below), but the user can pick a different
+             one — useful when the first word is too short or generic to be a good rule. -->
+        <div class="tokens-wrap" x-show="ruleModal.tokens.length">
+          <div class="modal-label">Pick a word from the description</div>
+          <div class="token-source" x-text="ruleModal.description"></div>
+          <div class="token-chips">
+            <template x-for="tok in ruleModal.tokens" :key="tok.value">
+              <!-- Chip is highlighted when its value appears as a whole word in
+                   the pattern (bounded by any non-word char, so it lights up for
+                   both "jem fix" and "jem & fix" but not for "menylyngby"). -->
+              <button type="button"
+                      class="token-chip"
+                      :class="{ selected: new RegExp('(^|[^\\\\p{L}\\\\p{N}])' + tok.value.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&') + '($|[^\\\\p{L}\\\\p{N}])','iu').test(ruleModal.pattern) }"
+                      @click="selectToken(tok)"
+                      x-text="tok.display"></button>
+            </template>
+          </div>
+        </div>
+
+        <label class="modal-label">If description contains</label>
+        <input id="rule-pattern-input" type="text" x-model="ruleModal.pattern"
+               placeholder="e.g. meny" autocomplete="off" spellcheck="false" />
+        <p class="hint">
+          Matching is case-insensitive. Shorter substrings match more transactions
+          (e.g. <code>meny</code> matches every Meny store; <code>rema1000</code> matches every Rema 1000).
+        </p>
+        <p class="match-count" x-show="!ruleModal.error">
+          <strong x-text="ruleModal.matchCount"></strong>
+          existing transaction<span x-show="ruleModal.matchCount !== 1">s</span>
+          will be re-categorized to <strong x-text="ruleModal.categoryName"></strong>.
+        </p>
+        <div class="rule-error" x-show="ruleModal.error">
+          <p x-text="ruleModal.error"></p>
+          <!-- When the pattern collides with an existing rule pointing to a
+               different category, offer to update that rule in place instead of
+               forcing the user to leave the modal and delete the old rule. -->
+          <button type="button" class="warn-primary" x-show="ruleModal.duplicateExisting"
+                  @click="updateExistingRule()">
+            Update existing rule → <span x-text="ruleModal.categoryName"></span>
+          </button>
+        </div>
+        <div class="modal-actions">
+          <button @click="closeRuleModal()">Skip — don't create rule</button>
+          <button class="primary" @click="confirmRule()"
+                  :disabled="!(ruleModal.pattern || '').trim()">
+            Create rule
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Vendor libs -->
+  <script src="https://cdn.jsdelivr.net/npm/dexie@4.0.10/dist/dexie.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
+  <!-- Google Identity Services — used only when the user opts into Drive sync
+       on the Backup page. If it fails to load (e.g. offline), the rest of the
+       app works exactly the same. -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.3/dist/cdn.min.js"></script>
+
+  <!-- App modules (order matters: db → utils → pages → app).
+       ?v=... is a cache-buster — bump on release so browsers pick up updates. -->
+  <script src="js/db.js?v=23"></script>
+  <script src="js/utils.js?v=23"></script>
+  <script src="js/csv.js?v=23"></script>
+  <script src="js/rules.js?v=23"></script>
+  <script src="js/categories.js?v=23"></script>
+  <script src="js/transactions.js?v=23"></script>
+  <script src="js/import.js?v=23"></script>
+  <script src="js/dashboard.js?v=23"></script>
+  <script src="js/forecast.js?v=23"></script>
+  <script src="js/backup.js?v=23"></script>
+  <script src="js/sync.js?v=23"></script>
+  <script src="js/app.js?v=23"></script>
+</body>
+</html>
