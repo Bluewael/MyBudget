@@ -38,7 +38,7 @@ const LS_LAST_SYNC = 'budget_sync_last_sync';
 // (e.g. this is a template others will fork and self-deploy). The Backup page
 // will fall back to showing the "paste your Client ID + setup guide" UI.
 // ─────────────────────────────────────────────────────────────────────────────
-const DEFAULT_CLIENT_ID = ''; // e.g. '1234567890-xxxxxxx.apps.googleusercontent.com'
+const DEFAULT_CLIENT_ID = '854238608874-77i18o7u8i06ni23dqcucpocinj972q2.apps.googleusercontent.com'; // e.g. '1234567890-xxxxxxx.apps.googleusercontent.com'
 
 // State exposed globally so the Alpine sync panel and any diagnostics can
 // read it. UI subscribes to the 'sync-state-changed' custom event to react.
