@@ -14,6 +14,7 @@
       <div class="tabs">
         <button :class="{ active: page === 'dashboard' }" @click="page = 'dashboard'">Dashboard</button>
         <button :class="{ active: page === 'forecast' }" @click="page = 'forecast'">Forecast</button>
+        <button :class="{ active: page === 'trends' }" @click="page = 'trends'">Trends</button>
         <button :class="{ active: page === 'transactions' }" @click="page = 'transactions'">Transactions</button>
         <button :class="{ active: page === 'import' }" @click="page = 'import'">Import</button>
         <button :class="{ active: page === 'categories' }" @click="page = 'categories'">Categories</button>
@@ -199,6 +200,67 @@
 
         <p class="empty" x-show="!hasAnyCategories">
           Add at least one Income or Expense category to see a forecast.
+        </p>
+      </section>
+
+      <!-- TRENDS -->
+      <section x-show="page === 'trends'" x-data="trendsPage()">
+        <header class="page-header">
+          <h1>Trends</h1>
+          <div class="dashboard-controls">
+            <div class="view-toggle" role="tablist" aria-label="Granularity">
+              <button :class="{ active: granularity === 'month' }" @click="granularity = 'month'">Monthly</button>
+              <button :class="{ active: granularity === 'week' }"  @click="granularity = 'week'">Weekly</button>
+            </div>
+            <!-- Same Alpine/select timing gotcha as elsewhere — resync value after
+                 the nested x-for populates the options. -->
+            <select x-model.number="categoryId"
+                    x-effect="categories.length && $nextTick(() => $el.value = categoryId ?? '')">
+              <template x-for="c in categories" :key="c.id">
+                <option :value="c.id" x-text="c.name + ' (' + c.kind + ')'"></option>
+              </template>
+            </select>
+            <div class="month-picker">
+              <button @click="year -= 1" title="Previous year">‹</button>
+              <span x-text="year"></span>
+              <button @click="year += 1" title="Next year">›</button>
+            </div>
+          </div>
+        </header>
+
+        <div class="summary-cards" x-show="category">
+          <div class="card">
+            <div class="card-label">Total <span x-text="year"></span></div>
+            <div class="card-value" :class="{ over: granularity === 'month' && totalYearBudget && totalYear > totalYearBudget }"
+                 x-text="fmt(totalYear)"></div>
+          </div>
+          <div class="card" x-show="granularity === 'month'">
+            <div class="card-label">Year budget</div>
+            <div class="card-value" x-text="fmt(totalYearBudget)"></div>
+          </div>
+          <div class="card">
+            <div class="card-label">Average per active <span x-text="granularity"></span></div>
+            <div class="card-value" x-text="fmt(averagePerActivePeriod)"></div>
+          </div>
+          <div class="card">
+            <div class="card-label">Peak <span x-text="granularity"></span></div>
+            <div class="card-value">
+              <span x-text="fmt(peak.value)"></span>
+              <small x-text="peak.label !== '—' ? ' (' + peak.label + ')' : ''"></small>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-label">Transactions</div>
+            <div class="card-value" x-text="totalCount"></div>
+          </div>
+        </div>
+
+        <div class="chart-wrap" x-show="category">
+          <canvas id="trendsChart"></canvas>
+        </div>
+
+        <p class="empty" x-show="!categories.length">
+          Add at least one category to see trends.
         </p>
       </section>
 
@@ -640,17 +702,18 @@
 
   <!-- App modules (order matters: db → utils → pages → app).
        ?v=... is a cache-buster — bump on release so browsers pick up updates. -->
-  <script src="js/db.js?v=23"></script>
-  <script src="js/utils.js?v=23"></script>
-  <script src="js/csv.js?v=23"></script>
-  <script src="js/rules.js?v=23"></script>
-  <script src="js/categories.js?v=23"></script>
-  <script src="js/transactions.js?v=23"></script>
-  <script src="js/import.js?v=23"></script>
-  <script src="js/dashboard.js?v=23"></script>
-  <script src="js/forecast.js?v=23"></script>
-  <script src="js/backup.js?v=23"></script>
-  <script src="js/sync.js?v=23"></script>
-  <script src="js/app.js?v=23"></script>
+  <script src="js/db.js?v=25"></script>
+  <script src="js/utils.js?v=25"></script>
+  <script src="js/csv.js?v=25"></script>
+  <script src="js/rules.js?v=25"></script>
+  <script src="js/categories.js?v=25"></script>
+  <script src="js/transactions.js?v=25"></script>
+  <script src="js/import.js?v=25"></script>
+  <script src="js/dashboard.js?v=25"></script>
+  <script src="js/forecast.js?v=25"></script>
+  <script src="js/trends.js?v=25"></script>
+  <script src="js/backup.js?v=25"></script>
+  <script src="js/sync.js?v=25"></script>
+  <script src="js/app.js?v=25"></script>
 </body>
 </html>
